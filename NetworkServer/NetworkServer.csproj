@@ -6,4 +6,8 @@
         <RootNamespace>NetworkGameServer</RootNamespace>
     </PropertyGroup>
 
+    <ItemGroup>
+      <PackageReference Include="MessagePack" Version="2.1.90" />
+    </ItemGroup>
+
 </Project>

@@ -1,6 +1,8 @@
-﻿namespace NetworkGameServer.NetworkData
+﻿using MessagePack;
+
+namespace NetworkGameServer.NetworkData
 {
-    [System.Serializable]
+    [MessagePackObject]
     public class Data_Ping : Data_Base
     {
         public Data_Ping()
