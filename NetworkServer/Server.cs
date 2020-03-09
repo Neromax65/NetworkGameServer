@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Numerics;
 using System.Runtime.Serialization.Formatters;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
@@ -18,21 +20,28 @@ namespace NetworkGameServer
     public class Server
     {
         private Socket _listenSocket;
-        private List<Socket> _clientConnections;
+        // private List<Socket> _clientConnections;
 
-        private Dictionary<Socket, int> _pingFailureCountDict;
+        // private Dictionary<Socket, int> _pingFailureCountDict;
+        private Dictionary<int, ConnectedClient> _connectedClients;
+        private Dictionary<int, NetworkObject> _networkObjects;
+        
+        
         private Timer _serverLoopTimer;
         private ILogger _logger;
         
         public void Start(string ip, int port)
         {
             _logger = new TimestampLogger();
+            _connectedClients = new Dictionary<int, ConnectedClient>();
+            _networkObjects = new Dictionary<int, NetworkObject>();
             IPEndPoint ipEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
             _listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             _listenSocket.Bind(ipEndPoint);
             _logger.Log($"Server is started on {ip}:{port}");
-            _clientConnections = new List<Socket>();
-            _pingFailureCountDict = new Dictionary<Socket, int>();
+            // _clientConnections = new List<Socket>();
+            
+            // _pingFailureCountDict = new Dictionary<Socket, int>();
             _listenSocket.Listen(Constants.MAX_PENDING_CONNECTIONS);
             _logger.Log($"Listening to connections...");
             _serverLoopTimer = SimpleTimer.Start(ServerLoop, Constants.TIME_BETWEEN_TICK, true);
@@ -47,23 +56,22 @@ namespace NetworkGameServer
             
             // _pingFailureCountDict[clientConnection]++;
             // _logger.Log($"Ping failure count: {_pingFailureCountDict[clientConnection]}");
-            if (_pingFailureCountDict[clientConnection] >= Constants.MAX_PING_FAILURE_COUNT)
-            {
-                _logger.Log($"Disconnecting client {clientConnection.RemoteEndPoint} due to not ping for {Constants.MAX_PING_FAILURE_COUNT} ticks.");
-                clientConnection.Disconnect(false);
-            }
+            // if (_pingFailureCountDict[clientConnection] >= Constants.MAX_PING_FAILURE_COUNT)
+            // {
+            //     _logger.Log($"Disconnecting client {clientConnection.RemoteEndPoint} due to not ping for {Constants.MAX_PING_FAILURE_COUNT} ticks.");
+            //     clientConnection.Disconnect(false);
+            // }
             return false;
         }
 
-        private async void ReceiveData(Socket clientConnection)
+        private async void ReceiveData(ConnectedClient client)
         {
-            if (IsAnyDataReceived(clientConnection))
-                _pingFailureCountDict[clientConnection] = 0;
-            else
+            if (!IsAnyDataReceived(client.Connection))
                 return;
+            // _pingFailureCountDict[clientConnection] = 0;
 
             byte[] buffer = new byte[Constants.BUFFER_SIZE];
-            int bytes = await clientConnection.ReceiveAsync(buffer, SocketFlags.None);
+            int bytes = await client.Connection.ReceiveAsync(buffer, SocketFlags.None);
             List<INetworkData> dataList = DeserializeData(buffer, bytes);
             if (dataList == null || dataList.Count == 0)
                 return;
@@ -73,12 +81,12 @@ namespace NetworkGameServer
             // });
             foreach (var data in dataList)
             {
-                HandleCommand(data.Command, data, clientConnection);
+                HandleCommand(data.Command, data, client);
             }
 
         }
 
-        private void HandleCommand(byte command, INetworkData data, Socket clientConnection)
+        private void HandleCommand(byte command, INetworkData data, ConnectedClient client)
         {
             switch (command)
             {
@@ -86,22 +94,52 @@ namespace NetworkGameServer
                     _logger.Log("No command was received.");
                     break;
                 case Command.Ping:
-                    // _logger.Log($"Received ping from client ({clientConnection.RemoteEndPoint})");
-                    // var pingData = new Data_Ping();
-                    // SendDataTo(clientConnection, pingData);
                     break;
                 case Command.Position:
-                    // var moveData = data as Data_Position;
-                    // _logger.Log($"Received move data: (GameObject Id: {moveData.Id} X:{moveData.X}, Y:{moveData.Y}, Z:{moveData.Z})");
-                    SendDataExcept(clientConnection, data);
-                    // pingData = new Data_Ping();
-                    // SendDataTo(clientConnection, pingData);
+                    var posData = data as Data_Position;
+                    _networkObjects[posData.Id].Position = new Vector3(posData.X, posData.Y, posData.Z);
+                    SendDataExcept(client, data);
                     break;
                 case Command.Rotation:
-                    SendDataExcept(clientConnection, data);
+                    var rotData = data as Data_Rotation;
+                    _networkObjects[rotData.Id].Rotation = new Vector4(rotData.X, rotData.Y, rotData.Z, rotData.W);
+                    SendDataExcept(client, data);
                     break;
                 case Command.Scale:
-                    SendDataExcept(clientConnection, data);
+                    var sclData = data as Data_Scale;
+                    _networkObjects[sclData.Id].Scale = new Vector3(sclData.X, sclData.Y, sclData.Z);
+                    SendDataExcept(client, data);
+                    break;
+                case Command.Spawn:
+                    SendDataExcept(client, data);
+                    break;
+                case Command.Connect:
+                    var connectData = data as Data_Connect;
+                    client.PlayerName = connectData.PlayerName;
+                    _logger.Log($"Player {client.PlayerName} connected.");
+                    Synchronize(client);
+                    break;
+                case Command.Disconnect:
+                    CloseConnection(client);
+                    break;
+                case Command.Register:
+                    var registerData = data as Data_Register;
+                    var networkObject = new NetworkObject(registerData.Id, registerData.PrefabIndex,
+                        registerData.OwningPlayerId);
+                    if (!_networkObjects.ContainsKey(networkObject.Id))
+                        _networkObjects.Add(registerData.Id, networkObject);
+                    if (!_connectedClients[registerData.OwningPlayerId].NetworkObjects.ContainsKey(networkObject.Id))
+                        _connectedClients[registerData.OwningPlayerId].NetworkObjects[networkObject.Id] = networkObject;
+                    break;
+                case Command.Unregister:
+                    var unregisterData = data as Data_Unregister;
+                    _networkObjects.Remove(unregisterData.Id);
+                    // TODO: Temporary
+                    foreach (var connectedClient in _connectedClients.Values)
+                    {
+                        if (connectedClient.NetworkObjects.ContainsKey(unregisterData.Id))
+                            connectedClient.NetworkObjects.Remove(unregisterData.Id);
+                    }
                     break;
                 default:
                     _logger.Log("Unrecognized command.");
@@ -109,35 +147,86 @@ namespace NetworkGameServer
             }
         }
 
-        private void SendDataExcept(Socket exceptClientConnection, INetworkData data)
+
+        private void Synchronize(ConnectedClient client)
         {
-            foreach (var clientConnection in _clientConnections)
+            foreach (var networkObject in _networkObjects.Values)
             {
-                if (clientConnection == exceptClientConnection)
+                if (networkObject.PrefabIndex != -1)
+                {
+                    var spawnData = new Data_Spawn()
+                    {
+                        PrefabIndex = networkObject.PrefabIndex,
+                        PosX = networkObject.Position.X,
+                        PosY = networkObject.Position.Y,
+                        PosZ = networkObject.Position.Z,
+                        RotX = networkObject.Rotation.X,
+                        RotY = networkObject.Rotation.Y,
+                        RotZ = networkObject.Rotation.Z,
+                        RotW = networkObject.Rotation.W
+                    };
+                    SendDataTo(client, spawnData);
+                }
+                else
+                {
+                    var posData = new Data_Position()
+                    {
+                        Id = networkObject.Id,
+                        X = networkObject.Position.X,
+                        Y = networkObject.Position.Y,
+                        Z = networkObject.Position.Z
+                    };
+                    SendDataTo(client, posData);
+                    var rotData = new Data_Rotation()
+                    {
+                        Id = networkObject.Id,
+                        X = networkObject.Rotation.X,
+                        Y = networkObject.Rotation.Y,
+                        Z = networkObject.Rotation.Z,
+                        W = networkObject.Rotation.W
+                    };
+                    SendDataTo(client, rotData);
+                    var sclData = new Data_Scale()
+                    {
+                        Id = networkObject.Id,
+                        X = networkObject.Scale.X,
+                        Y = networkObject.Scale.Y,
+                        Z = networkObject.Scale.Z
+                    };
+                    SendDataTo(client, sclData);
+                }
+            }
+        }
+
+        private void SendDataExcept(ConnectedClient exceptClient, INetworkData data)
+        {
+            foreach (var connectedClient in _connectedClients.Values)
+            {
+                if (connectedClient == exceptClient)
                     continue;
-                SendDataTo(clientConnection, data);
+                SendDataTo(connectedClient, data);
             }
             
         }
         
-        private async void SendDataExceptAsync(Socket exceptClientConnection, INetworkData data)
+        private async void SendDataExceptAsync(ConnectedClient exceptClient, INetworkData data)
         {
-            foreach (var clientConnection in _clientConnections)
+            foreach (var connectedClient in _connectedClients.Values)
             {
-                if (clientConnection == exceptClientConnection)
+                if (connectedClient == exceptClient)
                     continue;
-                SendDataToAsync(clientConnection, data);
+                SendDataToAsync(connectedClient, data);
             }
             
         }
         
         private void SendDataAll(INetworkData data)
         {
-            _clientConnections.ForEach(cc => SendDataTo(cc, data));
+            _connectedClients.Values.ToList().ForEach(cc => SendDataTo(cc, data));
         }
 
 
-        private void SendDataTo(Socket clientConnection, INetworkData data)
+        private void SendDataTo(ConnectedClient client, INetworkData data)
         {
             var serializedData = SerializeData(data);
             // if (data is Data_Move dataMove)
@@ -146,7 +235,7 @@ namespace NetworkGameServer
             // }
             try
             {
-                clientConnection.Send(serializedData);    
+                client.Connection.Send(serializedData);    
             }
             catch (SocketException ex)
             {
@@ -154,22 +243,22 @@ namespace NetworkGameServer
             }
         }
         
-        private async void SendDataToAsync(Socket clientConnection, INetworkData data)
+        private async void SendDataToAsync(ConnectedClient client, INetworkData data)
         {
             var serializedData = SerializeData(data);
-            if (data is Data_Position)
-                _logger.Log($"Data: {data} was sent to client {clientConnection.RemoteEndPoint}");
-            await clientConnection.SendAsync(serializedData, SocketFlags.None);
+            // if (data is Data_Position)
+            //     _logger.Log($"Data: {data} was sent to client {clientConnection.RemoteEndPoint}");
+            await client.Connection.SendAsync(serializedData, SocketFlags.None);
         }
 
-        private void CloseConnection(Socket clientConnection)
+        private void CloseConnection(ConnectedClient client)
         {
 
-            _logger.Log($"Client {clientConnection.RemoteEndPoint} has disconnected from server.");
-            _clientConnections.Remove(clientConnection);
-            _pingFailureCountDict.Remove(clientConnection);
-            clientConnection.Shutdown(SocketShutdown.Both);
-            clientConnection.Close();
+            _logger.Log($"Client {client.PlayerName} has disconnected from server.");
+            _connectedClients.Remove(client.Id);
+            // _pingFailureCountDict.Remove(clientConnection);
+            client.Connection.Shutdown(SocketShutdown.Both);
+            client.Connection.Close();
         }
 
 
@@ -177,17 +266,7 @@ namespace NetworkGameServer
         {
 
             byte[] bytes = MessagePackSerializer.Serialize(data);
-            // var test = MessagePackSerializer.Deserialize<INetworkData>(bytes);
-            // _logger.Log($"TEST DATA {test}:");
             return bytes;
-            // byte[] buffer = new byte[Constants.BUFFER_SIZE];
-            // BinaryFormatter formatter = new BinaryFormatter();
-            // formatter.AssemblyFormat = FormatterAssemblyStyle.Simple;
-            // using (var stream = new MemoryStream(buffer))
-            // {
-            //     formatter.Serialize(stream, data);
-            // }
-            // return buffer;
         }
         
         private List<INetworkData> DeserializeData(byte[] serializedData, int totalDataLength)
@@ -196,16 +275,15 @@ namespace NetworkGameServer
             {
                 List<INetworkData> dataList = new List<INetworkData>();
                 int bytesRead = 0;
-                _logger.Log($"Deserializing data of total length: {totalDataLength}");
+                // _logger.Log($"Deserializing data of total length: {totalDataLength}");
                 do
                 {
-                    _logger.Log($"Bytes read: {bytesRead}");
+                    // _logger.Log($"Bytes read: {bytesRead}");
                     INetworkData data = MessagePackSerializer.Deserialize<INetworkData>(serializedData, out var curBytesRead);
                     dataList.Add(data);
-                    _logger.Log($"DataList length: {dataList.Count}");
+                    // _logger.Log($"DataList length: {dataList.Count}");
                     bytesRead += curBytesRead;
                     serializedData = serializedData.Skip(curBytesRead).ToArray();
-                    _logger.Log($"Left to deserialize: {totalDataLength - bytesRead}");
                 } while (bytesRead < totalDataLength);
                 return dataList;
             }
@@ -214,46 +292,49 @@ namespace NetworkGameServer
                 _logger.LogError(ex.Message);
                 return null;
             }
-            // BinaryFormatter formatter = new BinaryFormatter();
-            // formatter.AssemblyFormat = FormatterAssemblyStyle.Simple;
-            // INetworkData data;
-            // using (var stream = new MemoryStream(serializedData))
-            // {
-            //     data = (INetworkData)formatter.Deserialize(stream);
-            // }
-            // return data;
         }
         
         private async void AcceptNewConnectionAsync()
         {
             Socket handler = await _listenSocket.AcceptAsync();
-            _clientConnections.Add(handler);
-            _pingFailureCountDict[handler] = 0;
+            // _clientConnections.Add(handler);
+            var clientId = GetIdForNewClient();
+            var connectedClient = new ConnectedClient(clientId, handler);
+            if (clientId == -1)
+            {
+                CloseConnection(connectedClient);
+                return;
+            }
+            _connectedClients[clientId] = connectedClient;
+            // _pingFailureCountDict[handler] = 0;
             _logger.Log($"Accepted a new connection from {handler.RemoteEndPoint}");
+        }
+
+        private int GetIdForNewClient()
+        {
+            for (int i = 0; i < Constants.MAX_PLAYERS; i++)
+            {
+                if (!_connectedClients.ContainsKey(i))
+                    return i;
+            }
+
+            _logger.LogError($"Client tried to connect, but there`s already max players in game.");
+            return -1;
         }
         
         private async void ServerLoop()
         {
             try
             {
-                Socket[] clientConnections = _clientConnections.ToArray();
-                Parallel.ForEach(clientConnections, (clientConnection) =>
+                // Socket[] clientConnections = _clientConnections.ToArray();
+                ConnectedClient[] clientConnections = _connectedClients.Values.ToArray();
+                Parallel.ForEach(clientConnections, (client) =>
                 {
-                    if (clientConnection.Connected)
-                        ReceiveData(clientConnection);
+                    if (client.Connection.Connected)
+                        ReceiveData(client);
                     else 
-                        CloseConnection(clientConnection);
+                        CloseConnection(client);
                 });
-                // foreach (var clientConnection in clientConnections)
-                // {
-                //     if (!clientConnection.Connected)
-                //     {
-                //         CloseConnection(clientConnection);
-                //         continue;
-                //     }
-                //
-                //     ReceiveData(clientConnection);
-                // }
 
                 AcceptNewConnectionAsync();
             }

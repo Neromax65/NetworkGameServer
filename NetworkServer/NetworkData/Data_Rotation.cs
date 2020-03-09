@@ -1,6 +1,6 @@
-﻿using MessagePack;
+﻿﻿using MessagePack;
 
-namespace NetworkGameServer.NetworkData
+ namespace NetworkGameServer.NetworkData
 {
     [MessagePackObject]
     public class Data_Rotation : Data_Base

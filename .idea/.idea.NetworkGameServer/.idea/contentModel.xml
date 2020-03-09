@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ContentModelStore">
+    <e p="C:\Users\nerom\.Rider2019.3\system\extResources" t="IncludeRecursive" />
+    <e p="C:\Users\nerom\.Rider2019.3\system\resharper-host\local\Transient\ReSharperHost\v193\SolutionCaches\_NetworkGameServer.1952093370.00" t="ExcludeRecursive" />
+    <e p="D:\UnityG\NetworkGameServer" t="IncludeFlat">
+      <e p="NetworkClient" t="IncludeRecursive">
+        <e p="bin" t="ExcludeRecursive" />
+        <e p="Client.cs" t="Include" />
+        <e p="NetworkClient.csproj" t="IncludeRecursive" />
+        <e p="obj" t="ExcludeRecursive">
+          <e p="Debug" t="Include">
+            <e p="netcoreapp3.0" t="Include">
+              <e p="NetworkClient.AssemblyInfo.cs" t="Include" />
+            </e>
+          </e>
+        </e>
+        <e p="Program.cs" t="Include" />
+      </e>
+      <e p="NetworkGameServer.sln" t="IncludeFlat" />
+      <e p="NetworkServer" t="IncludeRecursive">
+        <e p="bin" t="ExcludeRecursive" />
+        <e p="ConnectedClient.cs" t="Include" />
+        <e p="Constants.cs" t="Include" />
+        <e p="Logger" t="Include">
+          <e p="ILogger.cs" t="Include" />
+          <e p="TimestampLogger.cs" t="Include" />
+        </e>
+        <e p="NetworkData" t="Include">
+          <e p="Command.cs" t="Include" />
+          <e p="Data_Base.cs" t="Include" />
+          <e p="Data_Connect.cs" t="Include" />
+          <e p="Data_Disconnect.cs" t="Include" />
+          <e p="Data_Ping.cs" t="Include" />
+          <e p="Data_Position.cs" t="Include" />
+          <e p="Data_Register.cs" t="Include" />
+          <e p="Data_Rotation.cs" t="Include" />
+          <e p="Data_Scale.cs" t="Include" />
+          <e p="Data_Spawn.cs" t="Include" />
+          <e p="Data_Unregister.cs" t="Include" />
+          <e p="INetworkData.cs" t="Include" />
+        </e>
+        <e p="NetworkObject.cs" t="Include" />
+        <e p="NetworkServer.csproj" t="IncludeRecursive" />
+        <e p="obj" t="ExcludeRecursive">
+          <e p="Debug" t="Include">
+            <e p="netcoreapp3.0" t="Include">
+              <e p="NetworkServer.AssemblyInfo.cs" t="Include" />
+            </e>
+          </e>
+        </e>
+        <e p="Program.cs" t="Include" />
+        <e p="Server.cs" t="Include" />
+        <e p="SimpleTimer.cs" t="Include" />
+      </e>
+      <e p="packages" t="ExcludeRecursive" />
+    </e>
+  </component>
+</project>

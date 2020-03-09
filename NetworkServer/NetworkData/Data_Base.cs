@@ -1,6 +1,6 @@
-﻿using MessagePack;
+﻿﻿using MessagePack;
 
-namespace NetworkGameServer.NetworkData
+ namespace NetworkGameServer.NetworkData
 {
     [Union(0, typeof(Data_Ping))]
     [Union(1, typeof(Data_Position))]
