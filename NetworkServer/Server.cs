@@ -20,14 +20,8 @@ namespace NetworkGameServer
     public class Server
     {
         private Socket _listenSocket;
-        // private List<Socket> _clientConnections;
-
-        // private Dictionary<Socket, int> _pingFailureCountDict;
         private Dictionary<int, ConnectedClient> _connectedClients;
         private Dictionary<int, NetworkObject> _networkObjects;
-        
-        
-        private Timer _serverLoopTimer;
         private ILogger _logger;
         
         public void Start(string ip, int port)
@@ -39,51 +33,37 @@ namespace NetworkGameServer
             _listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             _listenSocket.Bind(ipEndPoint);
             _logger.Log($"Server is started on {ip}:{port}");
-            // _clientConnections = new List<Socket>();
-            
-            // _pingFailureCountDict = new Dictionary<Socket, int>();
             _listenSocket.Listen(Constants.MAX_PENDING_CONNECTIONS);
             _logger.Log($"Listening to connections...");
-            _serverLoopTimer = SimpleTimer.Start(ServerLoop, Constants.TIME_BETWEEN_TICK, true);
-            Console.ReadKey();
-        }
-
-
-
-        private bool IsAnyDataReceived(Socket clientConnection)
-        {
-            if (clientConnection.Available > 0) return true;
-            
-            // _pingFailureCountDict[clientConnection]++;
-            // _logger.Log($"Ping failure count: {_pingFailureCountDict[clientConnection]}");
-            // if (_pingFailureCountDict[clientConnection] >= Constants.MAX_PING_FAILURE_COUNT)
-            // {
-            //     _logger.Log($"Disconnecting client {clientConnection.RemoteEndPoint} due to not ping for {Constants.MAX_PING_FAILURE_COUNT} ticks.");
-            //     clientConnection.Disconnect(false);
-            // }
-            return false;
         }
 
         private async void ReceiveData(ConnectedClient client)
         {
-            if (!IsAnyDataReceived(client.Connection))
+            if (client.Connection.Available == 0)
+            {
+                if (client.Connected)
+                    client.PingFailure++;
+                if (client.PingFailure >= 4)
+                    _logger.Log($"{client.PlayerName}`s ping failure count: {client.PingFailure}");
+                if (client.PingFailure >= Constants.MAX_PING_FAILURE_COUNT)
+                    CloseConnection(client, DisconnectReason.PingFailure);
                 return;
-            // _pingFailureCountDict[clientConnection] = 0;
+            }
 
+            client.PingFailure = 0;
             byte[] buffer = new byte[Constants.BUFFER_SIZE];
             int bytes = await client.Connection.ReceiveAsync(buffer, SocketFlags.None);
             List<INetworkData> dataList = DeserializeData(buffer, bytes);
             if (dataList == null || dataList.Count == 0)
                 return;
-            // Parallel.ForEach(dataList, data =>
-            // {
-            //     HandleCommand(data.Command, data, clientConnection);
-            // });
-            foreach (var data in dataList)
+            Parallel.ForEach(dataList, data =>
             {
                 HandleCommand(data.Command, data, client);
+            });
+            if (client.Connection != null && client.Connection.Connected)
+            {
+                await SendDataToAsync(client, new Data_Ping());
             }
-
         }
 
         private void HandleCommand(byte command, INetworkData data, ConnectedClient client)
@@ -116,11 +96,13 @@ namespace NetworkGameServer
                 case Command.Connect:
                     var connectData = data as Data_Connect;
                     client.PlayerName = connectData.PlayerName;
+                    client.Connected = true;
                     _logger.Log($"Player {client.PlayerName} connected.");
                     Synchronize(client);
                     break;
                 case Command.Disconnect:
-                    CloseConnection(client);
+                    _logger.Log($"Received disconnect message from {client.PlayerName}");
+                    CloseConnection(client, DisconnectReason.Manual);
                     break;
                 case Command.Register:
                     var registerData = data as Data_Register;
@@ -229,10 +211,6 @@ namespace NetworkGameServer
         private void SendDataTo(ConnectedClient client, INetworkData data)
         {
             var serializedData = SerializeData(data);
-            // if (data is Data_Move dataMove)
-            // {
-            //     _logger.Log($"Data: (GameObjectId: {dataMove.Id}, X:{dataMove.X}, Y:{dataMove.Y}, Z:{dataMove.Z}) was sent to client {clientConnection.RemoteEndPoint}");
-            // }
             try
             {
                 client.Connection.Send(serializedData);    
@@ -243,22 +221,40 @@ namespace NetworkGameServer
             }
         }
         
-        private async void SendDataToAsync(ConnectedClient client, INetworkData data)
+        private async Task SendDataToAsync(ConnectedClient client, INetworkData data)
         {
             var serializedData = SerializeData(data);
-            // if (data is Data_Position)
-            //     _logger.Log($"Data: {data} was sent to client {clientConnection.RemoteEndPoint}");
             await client.Connection.SendAsync(serializedData, SocketFlags.None);
         }
 
-        private void CloseConnection(ConnectedClient client)
+        private enum DisconnectReason { RoomIsFull, Manual, PingFailure, SocketException}
+        
+        private void CloseConnection(ConnectedClient client, DisconnectReason disconnectReason)
         {
 
-            _logger.Log($"Client {client.PlayerName} has disconnected from server.");
-            _connectedClients.Remove(client.Id);
-            // _pingFailureCountDict.Remove(clientConnection);
-            client.Connection.Shutdown(SocketShutdown.Both);
-            client.Connection.Close();
+            switch (disconnectReason)
+            {
+                case DisconnectReason.RoomIsFull:
+                    _logger.LogError($"Client {client.PlayerName} tried to connect, but there`s already max players in game.");
+                    break;
+                case DisconnectReason.Manual:
+                    _logger.Log($"Client {client.PlayerName} has manually disconnected from server.");
+                    break;
+                case DisconnectReason.PingFailure:
+                    _logger.Log($"Client {client.PlayerName} from server due to not ping for {Constants.MAX_PING_FAILURE_COUNT} ticks.");
+                    break;
+                case DisconnectReason.SocketException:
+                    _logger.Log($"Client {client.PlayerName} disconnected from server because of SocketException");
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(disconnectReason), disconnectReason, null);
+            }
+            if (client.Connection.Connected)
+            {
+                _connectedClients.Remove(client.Id);
+                client.Connection.Shutdown(SocketShutdown.Both);
+                client.Connection.Close();
+            }
         }
 
 
@@ -269,27 +265,24 @@ namespace NetworkGameServer
             return bytes;
         }
         
-        private List<INetworkData> DeserializeData(byte[] serializedData, int totalDataLength)
+        private List<INetworkData> DeserializeData(byte[] serializedDataBuffer, int totalDataLength)
         {
             try
             {
-                List<INetworkData> dataList = new List<INetworkData>();
-                int bytesRead = 0;
-                // _logger.Log($"Deserializing data of total length: {totalDataLength}");
+                var dataList = new List<INetworkData>();
+                int totalBytesRead = 0;
                 do
                 {
-                    // _logger.Log($"Bytes read: {bytesRead}");
-                    INetworkData data = MessagePackSerializer.Deserialize<INetworkData>(serializedData, out var curBytesRead);
+                    INetworkData data = MessagePackSerializer.Deserialize<INetworkData>(serializedDataBuffer, out int bytesRead);
+                    totalBytesRead += bytesRead;
                     dataList.Add(data);
-                    // _logger.Log($"DataList length: {dataList.Count}");
-                    bytesRead += curBytesRead;
-                    serializedData = serializedData.Skip(curBytesRead).ToArray();
-                } while (bytesRead < totalDataLength);
+                    serializedDataBuffer = serializedDataBuffer.Skip(bytesRead).ToArray();
+                } while (totalBytesRead < totalDataLength);
                 return dataList;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex.Message);
+                _logger.LogError($"Deserialization error: {ex.Message}");
                 return null;
             }
         }
@@ -297,16 +290,14 @@ namespace NetworkGameServer
         private async void AcceptNewConnectionAsync()
         {
             Socket handler = await _listenSocket.AcceptAsync();
-            // _clientConnections.Add(handler);
             var clientId = GetIdForNewClient();
             var connectedClient = new ConnectedClient(clientId, handler);
             if (clientId == -1)
             {
-                CloseConnection(connectedClient);
+                CloseConnection(connectedClient, DisconnectReason.RoomIsFull);
                 return;
             }
             _connectedClients[clientId] = connectedClient;
-            // _pingFailureCountDict[handler] = 0;
             _logger.Log($"Accepted a new connection from {handler.RemoteEndPoint}");
         }
 
@@ -317,37 +308,26 @@ namespace NetworkGameServer
                 if (!_connectedClients.ContainsKey(i))
                     return i;
             }
-
-            _logger.LogError($"Client tried to connect, but there`s already max players in game.");
             return -1;
         }
         
-        private async void ServerLoop()
+        public async void Update()
         {
-            try
-            {
-                // Socket[] clientConnections = _clientConnections.ToArray();
-                ConnectedClient[] clientConnections = _connectedClients.Values.ToArray();
-                Parallel.ForEach(clientConnections, (client) =>
-                {
-                    if (client.Connection.Connected)
-                        ReceiveData(client);
-                    else 
-                        CloseConnection(client);
-                });
 
-                AcceptNewConnectionAsync();
-            }
-            catch (SocketException ex)
+            ConnectedClient[] clientConnections = _connectedClients.Values.ToArray();
+            Parallel.ForEach(clientConnections, (client) =>
             {
-                _logger.LogError($"Connection error: {ex.Message}");
-                // TODO: Disconnect client?
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex);
-                throw;
-            }
+                try
+                {
+                    ReceiveData(client);
+                }
+                catch (SocketException ex)
+                {
+                    _logger.LogError($"Connection error: {ex.Message}");
+                    CloseConnection(client, DisconnectReason.SocketException);
+                }
+            });
+            AcceptNewConnectionAsync();
         }
             
     }
