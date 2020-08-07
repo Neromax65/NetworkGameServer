@@ -1,7 +1,10 @@
-﻿﻿using MessagePack;
+﻿﻿﻿using MessagePack;
 
- namespace NetworkGameServer.NetworkData
+namespace NetworkGameServer.NetworkData
 {
+    /// <summary>
+    /// Ping data class
+    /// </summary>
     [MessagePackObject]
     public class Data_Ping : Data_Base
     {

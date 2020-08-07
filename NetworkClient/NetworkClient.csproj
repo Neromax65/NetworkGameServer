@@ -9,4 +9,8 @@
       <ProjectReference Include="..\NetworkServer\NetworkServer.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <PackageReference Include="MessagePack.UnityShims" Version="2.1.90" />
+    </ItemGroup>
+
 </Project>

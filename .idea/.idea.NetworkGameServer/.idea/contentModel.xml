@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ContentModelStore">
-    <e p="C:\Users\nerom\.Rider2019.3\system\extResources" t="IncludeRecursive" />
-    <e p="C:\Users\nerom\.Rider2019.3\system\resharper-host\local\Transient\ReSharperHost\v193\SolutionCaches\_NetworkGameServer.1952093370.00" t="ExcludeRecursive" />
+    <e p="C:\Users\nerom\AppData\local\JetBrains\Rider2020.1\extResources" t="IncludeRecursive" />
+    <e p="C:\Users\nerom\AppData\local\JetBrains\Rider2020.1\resharper-host\local\Transient\ReSharperHost\v201\SolutionCaches\_NetworkGameServer.1952093370.00" t="ExcludeRecursive" />
+    <e p="C:\Users\nerom\AppData\Roaming\JetBrains\Rider2020.1\consoles\db" t="IncludeRecursive" />
+    <e p="C:\Users\nerom\AppData\Roaming\JetBrains\Rider2020.1\extensions" t="IncludeRecursive" />
     <e p="D:\UnityG\NetworkGameServer" t="IncludeFlat">
       <e p="NetworkClient" t="IncludeRecursive">
         <e p="bin" t="ExcludeRecursive" />
@@ -38,6 +40,7 @@
           <e p="Data_Scale.cs" t="Include" />
           <e p="Data_Spawn.cs" t="Include" />
           <e p="Data_Unregister.cs" t="Include" />
+          <e p="DataPacket.cs" t="Include" />
           <e p="INetworkData.cs" t="Include" />
         </e>
         <e p="NetworkObject.cs" t="Include" />

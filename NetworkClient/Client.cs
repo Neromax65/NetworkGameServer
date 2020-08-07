@@ -14,6 +14,10 @@ using NetworkGameServer.NetworkData;
 
 namespace NetworkClient
 {
+    /// <summary>
+    /// Network client
+    /// FIXME: Obsolete
+    /// </summary>
     public class Client
     {
         private Socket _serverConnection;
@@ -32,9 +36,6 @@ namespace NetworkClient
             _serverConnection.Connect(ipEndPoint);
             _logger.Log($"Successfully connected to {ip}:{port}");
             
-            
-            // TODO: Make this work
-            // AppDomain.CurrentDomain.ProcessExit += (sender, eventArgs) => Disconnect();
             
             _clientLoopTimer = SimpleTimer.Start(ClientLoop, Constants.TIME_BETWEEN_TICK, true);
         }
@@ -166,7 +167,7 @@ namespace NetworkClient
                     break;
                 case Command.Position:
                     var moveData = data as Data_Position;
-                    _logger.Log($"Received move data: (GameObject Id: {moveData.Id} X:{moveData.X}, Y:{moveData.Y}, Z:{moveData.Z})");
+                    // _logger.Log($"Received move data: (GameObject Id: {moveData.Id} X:{moveData.X}, Y:{moveData.Y}, Z:{moveData.Z})");
                     break;
                 default:
                     _logger.Log("Unrecognized command.");

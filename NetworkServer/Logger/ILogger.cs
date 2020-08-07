@@ -1,13 +1,20 @@
 ﻿namespace NetworkGameServer.Logger
 {
+    /// <summary>
+    /// Logger interface
+    /// </summary>
     public interface ILogger
     {
-        // void Log(string message);
-        // void Log(int message);
-        // void Log(float message);
-        // void Log(bool message);
-        // void Log(byte message);
+        /// <summary>
+        /// Print message
+        /// </summary>
+        /// <param name="message">Message to print</param>
         void Log(object message);
+        
+        /// <summary>
+        /// Print error message
+        /// </summary>
+        /// <param name="message">Message to print</param>
         void LogError(object message);
     }
 }

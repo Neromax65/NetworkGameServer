@@ -1,15 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations.Schema;
-using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Numerics;
-using System.Runtime.Serialization.Formatters;
-using System.Runtime.Serialization.Formatters.Binary;
-using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using MessagePack;
 using NetworkGameServer.Logger;
@@ -17,18 +10,48 @@ using NetworkGameServer.NetworkData;
 
 namespace NetworkGameServer
 {
+    /// <summary>
+    /// Server class, that contains all information about server functionality
+    /// </summary>
     public class Server
     {
+        /// <summary>
+        /// Socket, that will be listening to connections
+        /// </summary>
         private Socket _listenSocket;
+        
+        /// <summary>
+        /// Dictionary, that stores connected clients
+        /// </summary>
         private Dictionary<int, ConnectedClient> _connectedClients;
+        
+        /// <summary>
+        /// Dictionary, that stores all network objects
+        /// </summary>
         private Dictionary<int, NetworkObject> _networkObjects;
+        
+        /// <summary>
+        /// Dictionary, which stores all packets of data, that need to be sent
+        /// </summary>
+        private Dictionary<int, DataPacket> _dataPackets;
+        
+        /// <summary>
+        /// Custom console logger
+        /// </summary>
         private ILogger _logger;
         
+        
+        /// <summary>
+        /// Initialize the server
+        /// </summary>
+        /// <param name="ip">IP-address</param>
+        /// <param name="port">Port</param>
         public void Start(string ip, int port)
         {
             _logger = new TimestampLogger();
             _connectedClients = new Dictionary<int, ConnectedClient>();
             _networkObjects = new Dictionary<int, NetworkObject>();
+            _dataPackets = new Dictionary<int, DataPacket>();
             IPEndPoint ipEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
             _listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             _listenSocket.Bind(ipEndPoint);
@@ -37,6 +60,10 @@ namespace NetworkGameServer
             _logger.Log($"Listening to connections...");
         }
 
+        /// <summary>
+        /// Receive data from client
+        /// </summary>
+        /// <param name="client">Client to listen</param>
         private async void ReceiveData(ConnectedClient client)
         {
             if (client.Connection.Available == 0)
@@ -49,11 +76,10 @@ namespace NetworkGameServer
                     CloseConnection(client, DisconnectReason.PingFailure);
                 return;
             }
-
             client.PingFailure = 0;
             byte[] buffer = new byte[Constants.BUFFER_SIZE];
             int bytes = await client.Connection.ReceiveAsync(buffer, SocketFlags.None);
-            List<INetworkData> dataList = DeserializeData(buffer, bytes);
+            List<INetworkData> dataList = DeserializeDataPacket(buffer).DataList;
             if (dataList == null || dataList.Count == 0)
                 return;
             Parallel.ForEach(dataList, data =>
@@ -62,10 +88,17 @@ namespace NetworkGameServer
             });
             if (client.Connection != null && client.Connection.Connected)
             {
-                await SendDataToAsync(client, new Data_Ping());
+                _dataPackets[client.Id].Add(new Data_Ping());
+
             }
         }
 
+        /// <summary>
+        /// Recognize network data from client
+        /// </summary>
+        /// <param name="command">Byte of command</param>
+        /// <param name="data">Network data</param>
+        /// <param name="client">Network client</param>
         private void HandleCommand(byte command, INetworkData data, ConnectedClient client)
         {
             switch (command)
@@ -77,17 +110,17 @@ namespace NetworkGameServer
                     break;
                 case Command.Position:
                     var posData = data as Data_Position;
-                    _networkObjects[posData.Id].Position = new Vector3(posData.X, posData.Y, posData.Z);
+                    _networkObjects[posData.Id].Position = posData.Position;
                     SendDataExcept(client, data);
                     break;
                 case Command.Rotation:
                     var rotData = data as Data_Rotation;
-                    _networkObjects[rotData.Id].Rotation = new Vector4(rotData.X, rotData.Y, rotData.Z, rotData.W);
+                    _networkObjects[rotData.Id].Rotation = rotData.Rotation;
                     SendDataExcept(client, data);
                     break;
                 case Command.Scale:
                     var sclData = data as Data_Scale;
-                    _networkObjects[sclData.Id].Scale = new Vector3(sclData.X, sclData.Y, sclData.Z);
+                    _networkObjects[sclData.Id].Scale = sclData.Scale;
                     SendDataExcept(client, data);
                     break;
                 case Command.Spawn:
@@ -129,7 +162,10 @@ namespace NetworkGameServer
             }
         }
 
-
+        /// <summary>
+        /// Synchronize all network objects with client
+        /// </summary>
+        /// <param name="client">Client to synchronize</param>
         private void Synchronize(ConnectedClient client)
         {
             foreach (var networkObject in _networkObjects.Values)
@@ -139,96 +175,105 @@ namespace NetworkGameServer
                     var spawnData = new Data_Spawn()
                     {
                         PrefabIndex = networkObject.PrefabIndex,
-                        PosX = networkObject.Position.X,
-                        PosY = networkObject.Position.Y,
-                        PosZ = networkObject.Position.Z,
-                        RotX = networkObject.Rotation.X,
-                        RotY = networkObject.Rotation.Y,
-                        RotZ = networkObject.Rotation.Z,
-                        RotW = networkObject.Rotation.W
+                        Position = networkObject.Position,
+                        Rotation = networkObject.Rotation
                     };
-                    SendDataTo(client, spawnData);
+                    _dataPackets[client.Id].Add(spawnData);
                 }
                 else
                 {
                     var posData = new Data_Position()
                     {
                         Id = networkObject.Id,
-                        X = networkObject.Position.X,
-                        Y = networkObject.Position.Y,
-                        Z = networkObject.Position.Z
+                        Position = networkObject.Position,
+                        Instantly = true
                     };
-                    SendDataTo(client, posData);
+                    _dataPackets[client.Id].Add(posData);
                     var rotData = new Data_Rotation()
                     {
                         Id = networkObject.Id,
-                        X = networkObject.Rotation.X,
-                        Y = networkObject.Rotation.Y,
-                        Z = networkObject.Rotation.Z,
-                        W = networkObject.Rotation.W
+                        Rotation = networkObject.Rotation,
+                        Instantly = true
                     };
-                    SendDataTo(client, rotData);
+                    _dataPackets[client.Id].Add(rotData);
                     var sclData = new Data_Scale()
                     {
                         Id = networkObject.Id,
-                        X = networkObject.Scale.X,
-                        Y = networkObject.Scale.Y,
-                        Z = networkObject.Scale.Z
+                        Scale = networkObject.Scale,
+                        Instantly = true
                     };
-                    SendDataTo(client, sclData);
+                    _dataPackets[client.Id].Add(sclData);
                 }
             }
         }
 
+        /// <summary>
+        /// Send network data to all clients, except one
+        /// </summary>
+        /// <param name="exceptClient">Client, that shouldn`t receive data</param>
+        /// <param name="data">Network data</param>
         private void SendDataExcept(ConnectedClient exceptClient, INetworkData data)
         {
-            foreach (var connectedClient in _connectedClients.Values)
+            foreach (var client in _connectedClients.Values)
             {
-                if (connectedClient == exceptClient)
+                if (client == exceptClient)
                     continue;
-                SendDataTo(connectedClient, data);
+                _dataPackets[client.Id].Add(data);
             }
             
         }
-        
-        private async void SendDataExceptAsync(ConnectedClient exceptClient, INetworkData data)
+
+        /// <summary>
+        /// Add data to packet for concrete client
+        /// </summary>
+        /// <param name="client">Network client</param>
+        /// <param name="data">Network data</param>
+        private void AddSendData(ConnectedClient client, INetworkData data)
         {
-            foreach (var connectedClient in _connectedClients.Values)
-            {
-                if (connectedClient == exceptClient)
-                    continue;
-                SendDataToAsync(connectedClient, data);
-            }
-            
-        }
-        
-        private void SendDataAll(INetworkData data)
-        {
-            _connectedClients.Values.ToList().ForEach(cc => SendDataTo(cc, data));
+            _dataPackets[client.Id].Add(data);
         }
 
-
-        private void SendDataTo(ConnectedClient client, INetworkData data)
+        /// <summary>
+        /// Send network data packet to the client
+        /// </summary>
+        /// <param name="client">Network client</param>
+        /// <param name="packet">Network data packet</param>
+        private void SendDataPacket(ConnectedClient client, DataPacket packet)
         {
-            var serializedData = SerializeData(data);
-            try
-            {
-                client.Connection.Send(serializedData);    
-            }
-            catch (SocketException ex)
-            {
-                _logger.LogError($"Error while sending data to client: {ex.Message}");
-            }
-        }
-        
-        private async Task SendDataToAsync(ConnectedClient client, INetworkData data)
-        {
-            var serializedData = SerializeData(data);
-            await client.Connection.SendAsync(serializedData, SocketFlags.None);
+            var serializedPacket = SerializeDataPacket(packet);
+            client.Connection.Send(serializedPacket);
         }
 
+        /// <summary>
+        /// Send network data packet to all connected clients
+        /// </summary>
+        private void SendDataPacketAll()
+        {
+            foreach (var client in _connectedClients.Values)
+            {
+                try
+                {
+                    if (_dataPackets[client.Id].DataList.Count > 0)
+                        SendDataPacket(client, _dataPackets[client.Id]);
+                }
+                catch (SocketException ex)
+                {
+                    _logger.LogError($"Failed to send data packet to {client.PlayerName}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reason for client disconnection
+        /// </summary>
         private enum DisconnectReason { RoomIsFull, Manual, PingFailure, SocketException}
         
+        /// <summary>
+        /// Close connection for the client
+        /// </summary>
+        /// <param name="client">Network client</param>
+        /// <param name="disconnectReason">Disconnect reason</param>
+        /// <exception cref="ArgumentOutOfRangeException">If disconnect reason is unknown</exception>
         private void CloseConnection(ConnectedClient client, DisconnectReason disconnectReason)
         {
 
@@ -244,49 +289,47 @@ namespace NetworkGameServer
                     _logger.Log($"Client {client.PlayerName} from server due to not ping for {Constants.MAX_PING_FAILURE_COUNT} ticks.");
                     break;
                 case DisconnectReason.SocketException:
-                    _logger.Log($"Client {client.PlayerName} disconnected from server because of SocketException");
+                    _logger.Log($"Client {client.PlayerName} disconnected from server because of SocketException.");
                     break;
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(disconnectReason), disconnectReason, null);
+                    throw new ArgumentOutOfRangeException(nameof(disconnectReason), disconnectReason, $"Client {client.PlayerName} disconnected from server because of unknown reason.");
             }
             if (client.Connection.Connected)
             {
                 _connectedClients.Remove(client.Id);
+                _dataPackets.Remove(client.Id);
                 client.Connection.Shutdown(SocketShutdown.Both);
                 client.Connection.Close();
             }
         }
 
-
-        private byte[] SerializeData(INetworkData data)
+        /// <summary>
+        /// Serialize data packet before sending to clients
+        /// </summary>
+        /// <param name="packet">Network data packet</param>
+        /// <returns>Array of bytes</returns>
+        private byte[] SerializeDataPacket(DataPacket packet)
         {
-
-            byte[] bytes = MessagePackSerializer.Serialize(data);
+            byte[] bytes = MessagePackSerializer.Serialize(packet);
             return bytes;
         }
-        
-        private List<INetworkData> DeserializeData(byte[] serializedDataBuffer, int totalDataLength)
+
+        /// <summary>
+        /// Deserialize data packet
+        /// </summary>
+        /// <param name="serializedData">Array of bytes</param>
+        /// <returns>Network DataPacket</returns>
+        private DataPacket DeserializeDataPacket(byte[] serializedData)
         {
-            try
-            {
-                var dataList = new List<INetworkData>();
-                int totalBytesRead = 0;
-                do
-                {
-                    INetworkData data = MessagePackSerializer.Deserialize<INetworkData>(serializedDataBuffer, out int bytesRead);
-                    totalBytesRead += bytesRead;
-                    dataList.Add(data);
-                    serializedDataBuffer = serializedDataBuffer.Skip(bytesRead).ToArray();
-                } while (totalBytesRead < totalDataLength);
-                return dataList;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Deserialization error: {ex.Message}");
-                return null;
-            }
+            var packet = MessagePackSerializer.Deserialize<DataPacket>(serializedData);
+            if (packet.DataList.Count == 0)
+                _logger.LogError("Could not recognize data.");
+            return packet;
         }
         
+        /// <summary>
+        /// Receive new connections on listening socket
+        /// </summary>
         private async void AcceptNewConnectionAsync()
         {
             Socket handler = await _listenSocket.AcceptAsync();
@@ -298,9 +341,14 @@ namespace NetworkGameServer
                 return;
             }
             _connectedClients[clientId] = connectedClient;
+            _dataPackets[clientId] = new DataPacket();
             _logger.Log($"Accepted a new connection from {handler.RemoteEndPoint}");
         }
 
+        /// <summary>
+        /// Generate id for client
+        /// </summary>
+        /// <returns>Network identity</returns>
         private int GetIdForNewClient()
         {
             for (int i = 0; i < Constants.MAX_PLAYERS; i++)
@@ -311,7 +359,10 @@ namespace NetworkGameServer
             return -1;
         }
         
-        public async void Update()
+        /// <summary>
+        /// Loop, that handles all network server data pass
+        /// </summary>
+        public void Update()
         {
 
             ConnectedClient[] clientConnections = _connectedClients.Values.ToArray();
@@ -320,6 +371,14 @@ namespace NetworkGameServer
                 try
                 {
                     ReceiveData(client);
+                    if (_dataPackets.ContainsKey(client.Id))
+                    {
+                        if (_dataPackets[client.Id].DataList.Count > 0)
+                        {
+                            SendDataPacket(client, _dataPackets[client.Id]);
+                            _dataPackets[client.Id].Clear();
+                        }
+                    }
                 }
                 catch (SocketException ex)
                 {
